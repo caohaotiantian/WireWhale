@@ -11,6 +11,7 @@ import json
 from monitor_system import start_monitor
 from forged_packet import startForged
 from multiprocessing import Process
+from threading import Event, Thread
 
 
 class Ui_MainWindow(QMainWindow):
@@ -103,6 +104,8 @@ class Ui_MainWindow(QMainWindow):
         """显示排序图标"""
         self.info_tree.header().setSortIndicatorShown(True)
         self.info_tree.clicked.connect(self.on_tableview_clicked)
+        self.info_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.info_tree.customContextMenuRequested.connect(self.on_generateMenu)
 
         # 数据包详细内容显示框
         self.treeWidget = QTreeWidget(self.centralWidget)
@@ -141,13 +144,13 @@ class Ui_MainWindow(QMainWindow):
 
         # 过滤器按钮
         self.FilterButton = QPushButton(self.centralWidget)
-        self.FilterButton.setText("开始")
+        self.FilterButton.setText("应用")
         icon1 = QIcon()
         icon1.addPixmap(QPixmap("img/go.png"), QIcon.Normal, QIcon.Off)
         self.FilterButton.setIcon(icon1)
         self.FilterButton.setIconSize(QSize(20, 20))
         self.FilterButton.setStyleSheet("background:white")
-        self.FilterButton.clicked.connect(self.on_start_action_clicked)
+        self.FilterButton.clicked.connect(self.on_filter_apply_clicked)
         self.horizontalLayout.addWidget(self.FilterButton)
         """
         网卡选择框
@@ -354,7 +357,8 @@ class Ui_MainWindow(QMainWindow):
         self.menuBar.addAction(self.menu_H.menuAction())
 
         # self.statusBar.showMessage('实时更新的信息', 0)  # 状态栏本身显示的信息 第二个参数是信息停留的时间，单位是毫秒，默认是0（0表示在下一个操作来临前一直显示）
-        """底部状态栏
+        """
+            底部状态栏
             利用self.comNum.setText()实时更新状态栏信息
         """
         self.comNum = QLabel('下载速度：')
@@ -454,6 +458,52 @@ class Ui_MainWindow(QMainWindow):
                 self.action_update.setDisabled(False)
 
     """
+        打开数据包列表右键菜单
+    """
+
+    def on_open_menu(self, evt):
+        thread1 = Thread(
+            target=self.on_generateMenu,
+            daemon=True,
+            name="on_generateMenu",
+            args=(evt)
+        )
+        thread1.start()
+
+    def on_generateMenu(self, evt):
+        prot = self.info_tree.currentItem().text(4)
+        action1 = QAction(u"TCP流重组")
+        action1.triggered.connect(self.on_reassemble)
+
+        right_menu = QMenu(self.info_tree)
+        right_menu.setStyleSheet("QMenu{background:#e5e5e8;}")
+
+        right_menu.addAction(action1)
+        if prot == 'TCP':
+            action1.isEnabled()
+        else:
+            pass
+        
+        # right_menu.move(QCursor.pos())
+        #right_menu.show()
+        right_menu.exec_(QCursor.pos())
+
+
+    
+    def on_reassemble(self):
+        num = int(self.info_tree.currentItem().text(0))
+        loads = self.core.reassemble(num)
+        reassemble_wind = Reassemble_Dialog()
+        reassemble_wind.setup()
+        if type(loads) == type('abc'):
+            reassemble_wind.textBrowser.setText(loads)
+        else:
+            reassemble_wind.textBrowser.setText(str(loads))
+        reassemble_wind.data = loads
+
+        reassemble_wind.dialog.exec_()
+
+    """
         展开帧的详细信息
     """
 
@@ -538,6 +588,21 @@ class Ui_MainWindow(QMainWindow):
         window_pale.setBrush(self.backgroundRole(), QBrush(QPixmap(imgName)))
         self.setPalette(window_pale)
 
+    '''
+        filter应用事件
+    '''
+    def on_filter_apply_clicked(self):
+        rules = self.core.rule_create(self.Filter.text())
+        if list(rules.values()).count(None) > 0:
+            showerror(title="Error", message="filter is illegal!")
+            return
+        else:
+            self.core.filters = rules
+            self.info_tree.clear()
+            self.core.index = 0
+            # self.core.filter_flag = True
+            # self.core.filter_apply()
+
     """
        开始键点击事件
     """
@@ -548,14 +613,16 @@ class Ui_MainWindow(QMainWindow):
             self.info_tree.clear()
             self.treeWidget.clear()
             self.set_hex_text("")
+        self.core.packet_id = 0
+        self.core.index = 0
         self.core.start_capture(self.get_choose_nic(), self.Filter.text())
         """
-           点击开始后，过滤器不可编辑，开始按钮、网卡选择框全部设为不可选
+           点击开始后，开始按钮、网卡选择框全部设为不可选
            激活暂停、停止键、重新开始键
         """
         self.start_action.setDisabled(True)
-        self.Filter.setEnabled(False)
-        self.FilterButton.setEnabled(False)
+        # self.Filter.setEnabled(False)
+        # self.FilterButton.setEnabled(False)
         self.choose_nicbox.setEnabled(False)
         self.actionRestart.setDisabled(False)
         self.pause_action.setEnabled(True)
@@ -569,32 +636,32 @@ class Ui_MainWindow(QMainWindow):
     def on_pause_action_clicked(self):
         self.core.pause_capture()
         """
-           激活开始、停止、重新开始键、过滤器、网卡选择框
+           激活开始、停止、重新开始键、网卡选择框
         """
         self.start_action.setEnabled(True)
         self.stop_action.setDisabled(False)
         self.actionRestart.setDisabled(False)
-        self.Filter.setDisabled(True)
-        self.FilterButton.setDisabled(True)
+        # self.Filter.setDisabled(True)
+        # self.FilterButton.setDisabled(True)
         self.choose_nicbox.setDisabled(False)
         self.pause_action.setDisabled(True)
         self.action_update.setDisabled(True)
         self.timer.stop()
 
     """
-           菜单栏停止键点击事件
+        菜单栏停止键点击事件
     """
 
     def on_stop_action_clicked(self):
         self.core.stop_capture()
         """
-            激活开始键、重新开始键、过滤器、网卡选择框
+            激活开始键、重新开始键、网卡选择框
         """
         self.stop_action.setDisabled(True)
         self.pause_action.setDisabled(True)
         self.start_action.setEnabled(True)
-        self.Filter.setDisabled(False)
-        self.FilterButton.setDisabled(False)
+        # self.Filter.setDisabled(False)
+        # self.FilterButton.setDisabled(False)
         self.choose_nicbox.setDisabled(False)
         self.action_update.setDisabled(True)
         self.timer.stop()
@@ -605,19 +672,21 @@ class Ui_MainWindow(QMainWindow):
 
     def on_actionRestart_clicked(self):
         # 重新开始清空面板内容
+        self.core.packet_id = 0
+        self.core.index = 0
         self.timer.stop()
         self.core.restart_capture(self.get_choose_nic(), self.Filter.text())
         self.info_tree.clear()
         self.treeWidget.clear()
         self.set_hex_text("")
         """
-           点击开始后，过滤器不可编辑，开始按钮，网卡选择框全部设为不可选
+           点击开始后，开始按钮，网卡选择框全部设为不可选
            激活暂停、停止键、重新开始键
         """
         self.actionRestart.setDisabled(False)
         self.start_action.setDisabled(True)
-        self.Filter.setEnabled(False)
-        self.FilterButton.setEnabled(False)
+        # self.Filter.setEnabled(False)
+        # self.FilterButton.setEnabled(False)
         self.choose_nicbox.setEnabled(False)
         self.pause_action.setEnabled(True)
         self.stop_action.setEnabled(True)
@@ -798,6 +867,68 @@ class Ui_MainWindow(QMainWindow):
         if event.key() == Qt.Key_F5:
             self.timer.start(flush_time)
             self.action_update.setDisabled(True)
+
+
+class Reassemble_Dialog(QDialog):
+    def setup(self):
+        self.data = ''
+        self.dialog = QDialog()
+        self.dialog.setObjectName("Dialog")
+        self.dialog.resize(900, 600)
+        self.gridLayout_2 = QGridLayout(self.dialog)
+        self.gridLayout_2.setObjectName("gridLayout_2")
+        self.gridLayout = QGridLayout()
+        self.gridLayout.setContentsMargins(10, 10, 10, 10)
+        self.gridLayout.setObjectName("gridLayout")
+        self.textBrowser = QTextBrowser(self.dialog)
+        self.textBrowser.setObjectName("textBrowser")
+        self.textBrowser.setHorizontalScrollBarPolicy(0)
+        self.gridLayout.addWidget(self.textBrowser, 0, 0, 1, 2)
+        # self.verticalScrollBar = QScrollBar(self.dialog)
+        # self.verticalScrollBar.setOrientation(Qt.Vertical)
+        # self.verticalScrollBar.setObjectName("verticalScrollBar")
+        # self.verticalScrollBar.
+        # self.gridLayout.addWidget(self.verticalScrollBar, 0, 2, 1, 1)
+        self.save_file = QPushButton(self.dialog)
+        self.save_file.setObjectName("pushButton")
+        self.gridLayout.addWidget(self.save_file, 1, 0, 1, 1)
+        self.buttonBox = QDialogButtonBox(self.dialog)
+        self.buttonBox.setOrientation(Qt.Horizontal)
+        self.buttonBox.setStandardButtons(QDialogButtonBox.Cancel|QDialogButtonBox.Ok)
+        self.buttonBox.setObjectName("buttonBox")
+        self.gridLayout.addWidget(self.buttonBox, 1, 1, 1, 1)
+        self.gridLayout_2.addLayout(self.gridLayout, 0, 0, 1, 1)
+
+        self.retranslateUi(self.dialog)
+        self.buttonBox.accepted.connect(self.dialog.accept)
+        self.buttonBox.rejected.connect(self.dialog.reject)
+        QMetaObject.connectSlotsByName(self.dialog)
+
+        self.save_file.clicked.connect(self.saving)
+
+    def retranslateUi(self, Dialog):
+        _translate = QCoreApplication.translate
+        Dialog.setWindowTitle(_translate("Dialog", "包重组"))
+        self.save_file.setText(_translate("Dialog", "另存为"))
+
+    def saving(self):
+        while True:
+            filename, _ = QFileDialog.getSaveFileName(
+                parent=None,
+                caption="保存文件",
+                directory=os.getcwd(),
+                filter="All Files (*)",
+            )
+            if filename == "":
+                QMessageBox.warning(None, "警告", "请输入文件名！")
+            else:
+                break
+
+        f = open(filename, "wb")
+        f.write(self.data)
+        f.close()
+        os.chmod(filename, 0o0400 | 0o0200 | 0o0040 | 0o0004)
+        QMessageBox.information(None, "提示", "保存成功！")
 
 
 def start():

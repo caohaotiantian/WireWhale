@@ -14,6 +14,8 @@ from scapy.layers.l2 import Ether
 from scapy.sendrecv import sniff
 from scapy.utils import *
 from tools import *
+from tkinter.messagebox import *
+
 
 platform, netcards = get_nic_list()
 flush_time = 2000
@@ -119,7 +121,13 @@ class Core():
     # 临时文件路径
     temp_file = None
     # 计数器
-    counter = {"ipv4": 0, "ipv6": 0, "tcp": 0, "udp": 0, "icmp": 0, "arp": 0}
+    counter = {"ipv4": 0, "ipv6": 0, "tcp": 0, "udp": 0, "icmp": 0, "igmp": 0, "arp": 0}
+    # filter表达式
+    filters = {"src_ip": [], "des_ip": [], "sport": [], "dport": [], "prot": []}
+    # filter标志位
+    filter_flag = False
+    # 显示指示序号
+    index = 0
 
     def __init__(self, mainwindow):
         """
@@ -132,94 +140,330 @@ class Core():
         self.temp_file = temp.name
         temp.close()
 
-    def process_packet(self, packet, writer):
+    def rule_create(self, expression):
+        rules = {"src_ip": [], "des_ip": [], "sport": [], "dport": [], "prot": []}
+        if expression.find("src_ip==") != -1:
+            index = expression.find("src_ip==") + 8
+            counts = 0
+            content = ''
+            for i in range(index, len(expression)):
+                chac = expression[i]
+                if chac.isdigit():
+                    content = content + chac
+                    continue
+                elif chac == '.':
+                    if counts >= 3:
+                        rules["src_ip"] = None
+                        content = ''
+                        break
+                    content = content + chac
+                    counts += 1
+                    continue
+                elif chac == ' ' or chac == '\t':
+                    continue
+                elif chac == '|':
+                    rules["src_ip"].append(content)
+                    counts = 0
+                    content = ''
+                    continue
+                elif chac == '&':
+                    break
+                else:
+                    rules["src_ip"] = None
+                    content = ''
+                    break
+            if content != '':
+                rules["src_ip"].append(content)
+            
+        if expression.find("des_ip==") != -1:
+            index = expression.find("des_ip==") + 8
+            counts = 0
+            content = ''
+            for i in range(index, len(expression)):
+                chac = expression[i]
+                if chac.isdigit():
+                    content = content + chac
+                    continue
+                elif chac == '.':
+                    if counts >= 3:
+                        rules["des_ip"] = None
+                        content = ''
+                        break
+                    content = content + chac
+                    counts += 1
+                    continue
+                elif chac == ' ' or chac == '\t':
+                    continue
+                elif chac == '|':
+                    rules["des_ip"].append(content)
+                    counts = 0
+                    content = ''
+                    continue
+                elif chac == '&':
+                    break
+                else:
+                    rules["des_ip"] = None
+                    content == ''
+                    break
+            if content != '':
+                rules["des_ip"].append(content)
+        if expression.find("sport==") != -1:
+            index = expression.find("sport==") + 7
+            content = ''
+            for i in range(index, len(expression)):
+                chac = expression[i]
+                if chac.isdigit():
+                    content = content + chac
+                    continue
+                elif chac == '|':
+                    rules["sport"].append(content)
+                    content = ''
+                    continue
+                elif chac == ' ' or chac == '\t':
+                    continue
+                elif chac == '&':
+                    break
+                else:
+                    rules["sport"] = None
+                    content = ''
+                    break
+            if content != '':
+                rules["sport"].append(content)
+        if expression.find("dport==") != -1:
+            index = expression.find("dport==") + 7
+            content = ''
+            for i in range(index, len(expression)):
+                chac = expression[i]
+                if chac.isdigit():
+                    content = content + chac
+                    continue
+                elif chac == '|':
+                    rules["dport"].append(content)
+                    content = ''
+                    continue
+                elif chac == ' ' or chac == '\t':
+                    continue
+                elif chac == '&':
+                    break
+                else:
+                    rules["dport"] = None
+                    content = ''
+                    break
+            if content != '':
+                rules["dport"].append(content)
+        if expression.find("prot==") != -1:
+            index = expression.find("prot==") + 6
+            content = ''
+            for i in range(index, len(expression)):
+                chac = expression[i]
+                if chac.isalpha():
+                    content = content + chac
+                    continue
+                elif chac == '|':
+                    rules["prot"].append(content.upper())
+                    content = ''
+                    continue
+                elif chac == ' ' or chac == '\t':
+                    continue
+                elif chac == '&':
+                    break
+                else:
+                    rules["prot"] = None
+                    content = ''
+                    break
+            if content != '':
+                rules["prot"].append(content.upper())
+        
+        return rules
+
+    def filting(self, packet, rules):
+        flag = False
+        ether_type = packet.payload.name
+        if ether_type == "IP":
+            source = packet[IP].src
+            destination = packet[IP].dst
+        # IPv6
+        elif ether_type == "IPv6":
+            source = packet[IPv6].src
+            destination = packet[IPv6].dst
+        elif ether_type == "ARP":
+            source = packet[Ether].src
+            destination = packet[Ether].dst
+
+        # 判断协议要求
+        if rules["prot"].count(ether_type) > 0:
+            flag = True
+        
+        if rules["src_ip"].count(source) == 0 and rules["src_ip"] != []:
+            return False
+        if rules["des_ip"].count(destination) == 0 and rules["des_ip"] != []:
+            return False
+
+        if rules["sport"] == []:
+            pass
+        else:
+            if ether_type == "ARP":
+                return False
+            else:
+                protocol = packet.payload.payload.name
+                sport = None
+                if protocol == "TCP":
+                    sport = packet[TCP].sport
+                elif protocol == "UDP":
+                    sport = packet[UDP].sport
+                else:
+                    return False
+                if rules["sport"].count(sport) == 0:
+                    return False
+                # 判断协议要求
+                if rules["prot"].count(protocol) > 0:
+                    flag = True
+        
+        if rules["dport"] == []:
+            pass
+        else:
+            if ether_type == "ARP":
+                return False
+            else:
+                protocol = packet.payload.payload.name
+                dport = None
+                if protocol == "TCP":
+                    dport = packet[TCP].dport
+                elif protocol == "UDP":
+                    dport = packet[UDP].dport
+                else:
+                    return False
+                if rules["dport"].count(dport) == 0:
+                    return False
+                # 判断协议要求
+                if rules["prot"].count(protocol) > 0:
+                    flag = True
+
+        if ether_type == "ARP":
+            return False
+        else:
+            protocol = packet.payload.payload.name
+            # 判断协议要求
+            if rules["prot"].count(protocol) > 0:
+                flag = True
+
+        
+        if rules["prot"] == []:
+            flag = True
+
+        return flag
+
+
+    def collect(self, packet, writer):
+        if writer:
+            writer.write(packet)
+            self.packet_id += 1
+
+        return
+
+
+    def list_packet(self):
+        while True:
+            # 暂停时不更新
+            if self.pause_flag  or self.index >= self.packet_id - 1:
+                continue
+            pkt = self.read_packet(self.index)
+            if pkt != None:
+                self.index += 1
+                pkt = pkt[1]
+                if self.filting(pkt, self.filters):
+                    self.process_packet(pkt, self.index)
+                else:
+                    continue
+
+
+    def process_packet(self, packet, packet_id):
         """
         处理抓到的数据包
         :parma packet: 需要处理分类的包
         """
         try:
-            # 如果暂停，则不对列表进行更新操作
-            if not self.pause_flag and packet.name == "Ethernet":
-                protocol = None
-                if self.packet_id == 1:
-                    self.start_timestamp = packet.time
-                packet_time = packet.time - self.start_timestamp
-                # 第二层
-                ether_type = packet.payload.name
-                version_add = ""
-                # IPv4
-                if ether_type == "IP":
-                    source = packet[IP].src
-                    destination = packet[IP].dst
-                    self.counter["ipv4"] += 1
-                # IPv6
-                elif ether_type == "IPv6":
-                    source = packet[IPv6].src
-                    destination = packet[IPv6].dst
-                    version_add = "v6"
-                    self.counter["ipv6"] += 1
-                # ARP
-                elif ether_type == "ARP":
-                    self.counter["arp"] += 1
-                    protocol = ether_type
-                    source = packet[Ether].src
-                    destination = packet[Ether].dst
-                    if destination == "ff:ff:ff:ff:ff:ff":
-                        destination = "Broadcast"
+            protocol = None
+            if self.packet_id == 1:
+                self.start_timestamp = packet.time
+            packet_time = packet.time - self.start_timestamp
+            # 第二层
+            ether_type = packet.payload.name
+            version_add = ""
+            # IPv4
+            if ether_type == "IP":
+                source = packet[IP].src
+                destination = packet[IP].dst
+                self.counter["ipv4"] += 1
+            # IPv6
+            elif ether_type == "IPv6":
+                source = packet[IPv6].src
+                destination = packet[IPv6].dst
+                version_add = "v6"
+                self.counter["ipv6"] += 1
+            # ARP
+            elif ether_type == "ARP":
+                self.counter["arp"] += 1
+                protocol = ether_type
+                source = packet[Ether].src
+                destination = packet[Ether].dst
+                if destination == "ff:ff:ff:ff:ff:ff":
+                    destination = "Broadcast"
+            else:
+                # 其他协议不处理
+                return
+            if ether_type != "ARP":
+                protocol = packet.payload.payload.name
+                sport = None
+                dport = None
+                if protocol == "TCP":
+                    sport = packet[TCP].sport
+                    dport = packet[TCP].dport
+                    protocol += version_add
+                    self.counter["tcp"] += 1
+                elif protocol == "UDP":
+                    sport = packet[UDP].sport
+                    dport = packet[UDP].dport
+                    protocol += version_add
+                    self.counter["udp"] += 1
+                elif len(protocol) >= 4 and protocol[0:4] == "ICMP":
+                    protocol = "ICMP"
+                    protocol += version_add
+                    self.counter["icmp"] += 1
+                elif len(protocol) >= 4 and protocol[0:4] == "IGMP":
+                    protocol = "IGMP"
+                    protocol += version_add
+                    self.counter["igmp"] += 1
                 else:
-                    # 其他协议不处理
                     return
-                if ether_type != "ARP":
-                    protocol = packet.payload.payload.name
-                    sport = None
-                    dport = None
-                    if protocol == "TCP":
-                        sport = packet[TCP].sport
-                        dport = packet[TCP].dport
-                        protocol += version_add
-                        self.counter["tcp"] += 1
-                    elif protocol == "UDP":
-                        sport = packet[UDP].sport
-                        dport = packet[UDP].dport
-                        protocol += version_add
-                        self.counter["udp"] += 1
-                    elif len(protocol) >= 4 and protocol[0:4] == "ICMP":
-                        protocol = "ICMP"
-                        protocol += version_add
-                        self.counter["icmp"] += 1
-                    else:
-                        return
-                    if sport and dport:
-                        # HTTPS
-                        if sport == 443 or dport == 443:
-                            https = packet.payload.payload.payload.__bytes__(
-                            ).hex()
-                            if len(https) >= 10 and https[2:4] == '03':
-                                if https[0:2] in content_type and https[
-                                        4:6] in version:
-                                    protocol = version[https[4:6]]
-                        elif sport in ports:
-                            protocol = ports[sport] + version_add
-                        elif dport in ports:
-                            protocol = ports[dport] + version_add
-                item = QTreeWidgetItem(self.main_window.info_tree)
-                # 根据协议类型不同设置颜色
-                color = color_dict[protocol]
-                for i in range(7):
-                    item.setBackground(i, QBrush(QColor(color)))
-                # 添加行内容
-                item.setData(0, Qt.DisplayRole, self.packet_id)
-                item.setText(1, "%12.6f " % packet_time)
-                item.setText(2, source)
-                item.setText(3, destination)
-                item.setText(4, protocol)
-                item.setData(5, Qt.DisplayRole, len(packet))
-                item.setText(6, packet.summary())
-                # 设置右对齐，为了格式化后不影响排序
-                item.setTextAlignment(1, Qt.AlignRight)
-                self.packet_id += 1
-                if writer:
-                    writer.write(packet)
+                if sport and dport:
+                    # HTTPS
+                    if sport == 443 or dport == 443:
+                        https = packet.payload.payload.payload.__bytes__(
+                        ).hex()
+                        if len(https) >= 10 and https[2:4] == '03':
+                            if https[0:2] in content_type and https[
+                                    4:6] in version:
+                                protocol = version[https[4:6]]
+                    elif sport in ports:
+                        protocol = ports[sport] + version_add
+                    elif dport in ports:
+                        protocol = ports[dport] + version_add
+            item = QTreeWidgetItem(self.main_window.info_tree)
+            # 根据协议类型不同设置颜色
+            color = color_dict[protocol]
+            for i in range(7):
+                item.setBackground(i, QBrush(QColor(color)))
+            # 添加行内容
+            item.setData(0, Qt.DisplayRole, packet_id)
+            item.setText(1, "%12.6f " % packet_time)
+            item.setText(2, source)
+            item.setText(3, destination)
+            item.setText(4, protocol)
+            item.setData(5, Qt.DisplayRole, len(packet))
+            item.setText(6, packet.summary())
+            # 设置右对齐，为了格式化后不影响排序
+            item.setTextAlignment(1, Qt.AlignRight)
         except:
             pass
 
@@ -731,6 +975,149 @@ class Core():
             second_return.clear()
         return first_return, second_return
 
+    '''
+    # 报文分片重组
+    def reassemble(self, index):
+        time, packet = self.read_packet(index - 1)
+        loads = b''
+        if packet.haslayer(Raw):
+            pkt_id = packet[IP].id
+            i = 0
+            plist = PacketList()
+            while True:
+                if i >= self.packet_id - 1:
+                    continue
+                if i == self.packet_id - 2:
+                    break
+                pkt = self.read_packet(i)
+                if pkt != None:
+                    pkt = pkt[1]
+                    if pkt.payload.name == "IP":
+                        if pkt[IP].id == pkt_id:
+                            plist.append(pkt)
+                    i += 1
+            
+            result_dict = {}
+            tmp_dict = {}
+            for pkt in plist:
+                tmp_dict[str(pkt[IP].frag)] = pkt
+            try:
+                result_dict[str(pkt_id)] = tmp_dict['0']
+            except:
+                return None
+            for frag in sorted(list(tmp_dict.keys())):
+                loads = loads + tmp_dict[frag].getlayer(Raw).load
+        else:
+            loads = 'No data in this packet'
+
+        return loads
+    '''
+
+    # TCP流重组
+    def reassemble(self, index):
+        time, packet = self.read_packet(index-1)
+        loads = b''
+        if packet.haslayer(Raw):
+            if packet[TCP].options != []:
+                max_length = packet[TCP].options[0][1]
+            else:
+                max_length = 536
+            if len(packet[Raw].load) > max_length:
+                check = {"src": None, "dst": None, "sport":None, "dport":None}
+                ether_type = packet.payload.name
+                if ether_type == "IP":
+                    check["src"] = packet[IP].src
+                    check["dst"] = packet[IP].dst
+                # IPv6
+                elif ether_type == "IPv6":
+                    check["src"] = packet[IPv6].src
+                    check["dst"] = packet[IPv6].dst
+                check["sport"] = packet[TCP].sport
+                check["dport"] = packet[TCP].dport
+                i = 0
+                result = []
+                while True:
+                    if i >= self.packet_id - 1:
+                        continue
+                    if i == self.packet_id - 2:
+                        break
+                    '''
+                    flag = True
+                    for j in range(len(result) - 1):
+                        if 
+                    '''
+                    pkt = self.read_packet(i)
+                    if pkt != None:
+                        pkt = pkt[1]
+                        if pkt.haslayer(TCP):
+                            temp = {"src": None, "dst": None, "sport":None, "dport":None}
+                            ether_type = pkt.payload.name
+                            if ether_type == "IP":
+                                temp["src"] = pkt[IP].src
+                                temp["dst"] = pkt[IP].dst
+                            # IPv6
+                            elif ether_type == "IPv6":
+                                temp["src"] = pkt[IPv6].src
+                                temp["dst"] = pkt[IPv6].dst
+                            temp["sport"] = pkt[TCP].sport
+                            temp["dport"] = pkt[TCP].dport
+                            if check == temp:
+                                num = -1
+                                for j in range(len(result)):
+                                    if not pkt.haslayer(Raw):
+                                        if pkt[TCP].seq != 0:
+                                            data = {"seq": pkt[TCP].seq, "len": 0, "loads": None}
+                                            num = -1
+                                            result.append(data)
+                                        break
+                                    elif pkt[TCP].seq > result[len(result)-1]["seq"]:
+                                        data = {"seq": pkt[TCP].seq, "len": len(pkt[Raw].load), "loads":pkt[Raw].load}
+                                        if result[len(result)-1]["len"] == 0:
+                                            num = len(result)-1
+                                        else:
+                                            result.append(data)
+                                            num = -1
+                                        break
+                                    elif pkt[TCP].seq == result[j]["seq"]:
+                                        data = {"seq": pkt[TCP].seq, "len": len(pkt[Raw].load), "loads":pkt[Raw].load}
+                                        num = -1
+                                        if data["len"] > result[j]["len"]:
+                                            result[j] = data
+                                        break   
+                                    elif pkt[TCP].seq < result[j]["seq"]:
+                                        num = j
+                                        data = {"seq": pkt[TCP].seq, "len": len(pkt[Raw].load), "loads":pkt[Raw].load}
+                                        break
+                                if pkt.haslayer(Raw) and result == []:
+                                    data = {"seq": pkt[TCP].seq, "len": len(pkt[Raw].load), "loads":pkt[Raw].load}
+                                    num = 0
+                                if num != -1:
+                                    result.insert(num, data)
+                        i += 1
+                target = []
+                for j in range(len(result)):
+                    if result[j]["len"] == 0:
+                        target.append(j)
+                for item in target:
+                    result.pop(j)
+                for j in range(len(result) - 2):
+                    if j == 0:
+                        loads = loads + result[j]["loads"]
+                    else:
+                        if result[j]["seq"] + result[j]["len"] > result[j+1]["seq"]:
+                            end = result[j+1]["seq"]
+                            loads = loads + result[j]["loads"][0:end]
+                        else:
+                            loads = loads + result[j]["loads"]
+                loads = loads + result[-1]["loads"]
+            else:
+                loads = packet[Raw].load
+        else:
+            loads = 'No data in this packet'
+
+        return loads
+
+
     def flow_count(self, netcard=None):
         """
         刷新下载速度、上传速度、发包速度和收包速度
@@ -764,8 +1151,8 @@ class Core():
         # sniff中的store=False 表示不保存在内存中，防止内存使用过高
         sniff(
             iface=netcard,
-            prn=(lambda x: self.process_packet(x, writer)),
-            filter=filters,
+            prn=(lambda x: self.collect(x, writer)),
+            filter=None,
             stop_filter=(lambda x: stop_capturing_thread.is_set()),
             store=False)
         # 执行完成关闭writer
@@ -808,13 +1195,30 @@ class Core():
             self.start_flag = True
             return
         # 开启新线程进行抓包
-        thread = Thread(
+        thread1 = Thread(
             target=self.capture_packet,
             daemon=True,
             name="capture_packet",
-            args=(netcard, filters))
-        thread.start()
+            args=(netcard, filters)
+        )
+        thread1.start()
+
+        thread2 = Thread(
+            target=self.list_packet,
+            daemon=True,
+            name="list_packet"
+        )
+        thread2.start()
         self.start_flag = True
+
+    def filter_apply(self):
+        thread2 = Thread(
+            target=self.list_packet,
+            daemon=True,
+            name="list_packet"
+        )
+        self.filter_flag = False
+        thread2.start()
 
     def pause_capture(self):
         """
