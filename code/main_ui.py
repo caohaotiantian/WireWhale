@@ -479,7 +479,7 @@ class Ui_MainWindow(QMainWindow):
         right_menu.setStyleSheet("QMenu{background:#e5e5e8;}")
 
         right_menu.addAction(action1)
-        if prot == 'TCP':
+        if prot == 'TCP' and self.core.pause_flag == False:
             action1.isEnabled()
         else:
             pass
