@@ -1105,7 +1105,7 @@ class Core():
                         loads = loads + result[j]["loads"]
                     else:
                         if result[j]["seq"] + result[j]["len"] > result[j+1]["seq"]:
-                            end = result[j+1]["seq"]
+                            end = result[j+1]["seq"] - result[j]["seq"]
                             loads = loads + result[j]["loads"][0:end]
                         else:
                             loads = loads + result[j]["loads"]
