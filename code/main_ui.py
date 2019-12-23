@@ -51,7 +51,7 @@ class Ui_MainWindow(QMainWindow):
 
         # 初始主窗口字体
         font = QFont()
-        with open('data.json', 'r') as file_obj:
+        with open('./data.json', 'r') as file_obj:
             '''读取json文件'''
             old_font = json.load(file_obj)  # 返回列表数据，也支持字典
         if old_font["font"]:
@@ -483,13 +483,11 @@ class Ui_MainWindow(QMainWindow):
             action1.isEnabled()
         else:
             pass
-        
+
         # right_menu.move(QCursor.pos())
-        #right_menu.show()
+        # right_menu.show()
         right_menu.exec_(QCursor.pos())
 
-
-    
     def on_reassemble(self):
         num = int(self.info_tree.currentItem().text(0))
         loads = self.core.reassemble(num)
@@ -591,6 +589,7 @@ class Ui_MainWindow(QMainWindow):
     '''
         filter应用事件
     '''
+
     def on_filter_apply_clicked(self):
         rules = self.core.rule_create(self.Filter.text())
         if list(rules.values()).count(None) > 0:
@@ -894,7 +893,8 @@ class Reassemble_Dialog(QDialog):
         self.gridLayout.addWidget(self.save_file, 1, 0, 1, 1)
         self.buttonBox = QDialogButtonBox(self.dialog)
         self.buttonBox.setOrientation(Qt.Horizontal)
-        self.buttonBox.setStandardButtons(QDialogButtonBox.Cancel|QDialogButtonBox.Ok)
+        self.buttonBox.setStandardButtons(
+            QDialogButtonBox.Cancel | QDialogButtonBox.Ok)
         self.buttonBox.setObjectName("buttonBox")
         self.gridLayout.addWidget(self.buttonBox, 1, 1, 1, 1)
         self.gridLayout_2.addLayout(self.gridLayout, 0, 0, 1, 1)
